@@ -1,0 +1,102 @@
+version: '3.8'
+
+services:
+  zookeeper:
+    image: confluentinc/cp-zookeeper:7.5.0
+    container_name: loglens-zookeeper
+    environment:
+      ZOOKEEPER_CLIENT_PORT: 2181
+      ZOOKEEPER_TICK_TIME: 2000
+    networks:
+      - loglens-network
+
+  kafka:
+    image: confluentinc/cp-kafka:7.5.0
+    container_name: loglens-kafka
+    depends_on:
+      - zookeeper
+    ports:
+      - "29092:29092"
+    environment:
+      KAFKA_BROKER_ID: 1
+      KAFKA_ZOOKEEPER_CONNECT: zookeeper:2181
+      KAFKA_ADVERTISED_LISTENERS: PLAINTEXT://kafka:9092,PLAINTEXT_HOST://localhost:29092
+      KAFKA_LISTENER_SECURITY_PROTOCOL_MAP: PLAINTEXT:PLAINTEXT,PLAINTEXT_HOST:PLAINTEXT
+      KAFKA_INTER_BROKER_LISTENER_NAME: PLAINTEXT
+      KAFKA_OFFSETS_TOPIC_REPLICATION_FACTOR: 1
+      KAFKA_AUTO_CREATE_TOPICS_ENABLE: "true"
+    networks:
+      - loglens-network
+
+  postgres:
+    image: postgres:16-alpine
+    container_name: loglens-postgres
+    environment:
+      POSTGRES_USER: loglens
+      POSTGRES_PASSWORD: loglens123
+      POSTGRES_DB: loglens
+    ports:
+      - "5433:5432"
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    networks:
+      - loglens-network
+
+  log-producer:
+    build:
+      context: .
+      dockerfile: log-producer/Dockerfile
+    container_name: loglens-producer
+    ports:
+      - "8091:8091"
+    environment:
+      SPRING_KAFKA_BOOTSTRAP_SERVERS: kafka:9092
+      SPRING_PROFILES_ACTIVE: docker
+    depends_on:
+      - kafka
+    networks:
+      - loglens-network
+
+  log-aggregator:
+    build:
+      context: .
+      dockerfile: log-aggregator/Dockerfile
+    container_name: loglens-aggregator
+    ports:
+      - "8092:8092"
+    environment:
+      SPRING_DATASOURCE_URL: jdbc:postgresql://postgres:5432/loglens
+      SPRING_DATASOURCE_USERNAME: loglens
+      SPRING_DATASOURCE_PASSWORD: loglens123
+      SPRING_KAFKA_BOOTSTRAP_SERVERS: kafka:9092
+      SPRING_PROFILES_ACTIVE: docker
+    depends_on:
+      - kafka
+      - postgres
+    networks:
+      - loglens-network
+
+  log-query-api:
+    build:
+      context: .
+      dockerfile: log-query-api/Dockerfile
+    container_name: loglens-query-api
+    ports:
+      - "8093:8093"
+    environment:
+      SPRING_DATASOURCE_URL: jdbc:postgresql://postgres:5432/loglens
+      SPRING_DATASOURCE_USERNAME: loglens
+      SPRING_DATASOURCE_PASSWORD: loglens123
+      SPRING_PROFILES_ACTIVE: docker
+    depends_on:
+      - postgres
+      - log-aggregator
+    networks:
+      - loglens-network
+
+networks:
+  loglens-network:
+    driver: bridge
+
+volumes:
+  postgres_data:
